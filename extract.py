@@ -8,70 +8,89 @@ from bs4 import BeautifulSoup
 import csv
 import time
 
-# ---------------- Chrome setup ----------------
+# ---------------- Chrome Options ----------------
 options = webdriver.ChromeOptions()
+options.add_argument("--headless=new")            # Headless mode
+options.add_argument("--window-size=1920,1080")
 options.add_argument("--disable-gpu")
-options.add_argument("--disable-software-rasterizer")
+options.add_argument("--disable-dev-shm-usage")
 options.add_argument("--no-sandbox")
-# options.add_argument("--headless")  # Keep OFF to see browser
+options.add_argument("--disable-blink-features=AutomationControlled")
+options.add_argument("--log-level=3")
+options.add_argument(
+    "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
 
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+# ---------------- Start driver -------------------
+driver = webdriver.Chrome(
+    service=Service(ChromeDriverManager().install()),
+    options=options
+)
 
-# ---------------- Open Lenovo driver page ----------------
-url = "https://pcsupport.lenovo.com/tc/en/products/laptops-and-netbooks/thinkpad-x-series-laptops/thinkpad-x1-carbon-13th-gen-type-21ns-21nt/downloads/driver-list/"
+url = (
+    "https://pcsupport.lenovo.com/tc/en/products/laptops-and-netbooks/"
+    "thinkpad-x-series-laptops/thinkpad-x1-carbon-13th-gen-type-21ns-21nt/"
+    "downloads/driver-list/"
+)
 driver.get(url)
-time.sleep(3)  # wait for page to load
+driver.set_window_size(1920, 1080)
 
-# ---------------- Click popup if present ----------------
+# allow JS to settle
+WebDriverWait(driver, 30).until(
+    EC.presence_of_element_located((By.TAG_NAME, "body"))
+)
+
+# ---------------- Handle region popup ------------
 try:
-    proceed_button = WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable((By.XPATH, "//button[text()='Proceed with Turks and Caicos Islands']"))
+    proceed_button = WebDriverWait(driver, 20).until(
+        EC.element_to_be_clickable(
+            (By.XPATH, "//button[normalize-space()='Proceed with Turks and Caicos Islands']")
+        )
     )
-    proceed_button.click()
-    print("Clicked 'Proceed with Turks and Caicos Islands'")
+    driver.execute_script("arguments[0].click();", proceed_button)
+    print("Clicked region popup")
 except:
-    print("Popup not found")
+    print("Popup not found or not needed")
 
+# ---------------- Click Audio tile ---------------
+try:
+    audio_tile = WebDriverWait(driver, 30).until(
+        EC.element_to_be_clickable(
+            (By.XPATH, "//p[contains(normalize-space(),'Audio')]/ancestor::div[contains(@class,'tile')]")
+        )
+    )
+    driver.execute_script("arguments[0].scrollIntoView(true);", audio_tile)
+    time.sleep(1)
+    driver.execute_script("arguments[0].click();", audio_tile)
+    print("Clicked 'Audio' tile")
+except:
+    print("Audio tile not found")
+
+# wait for table to render
+time.sleep(6)
+driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
 time.sleep(2)
 
-# ---------------- Click Audio (2) tile ----------------
-try:
-    audio_tile = WebDriverWait(driver, 15).until(
-        EC.presence_of_element_located((By.XPATH, "//p[contains(text(),'Audio (2)')]/ancestor::div[@class='tile']"))
-    )
-    driver.execute_script("arguments[0].click();", audio_tile)
-    print("Clicked 'Audio (2)' tile via JS")
-except:
-    print("Audio (2) tile not found")
-
-time.sleep(3)  # wait for table to render
-
-# ---------------- Extract table-body-content spans ----------------
+# ---------------- Extract data -------------------
 soup = BeautifulSoup(driver.page_source, "html.parser")
-rows = soup.find_all("div", class_="simple-table-dataRow")
+rows = []
 
-data_list = []
-for row in rows:
-    # Content span
-    content_span = row.find("span", attrs={"data-v-8be6d8ce": True})
-    content_text = content_span.text.strip() if content_span else ""
+for row in soup.select("div.simple-table-dataRow"):
+    content = row.select_one("div.table-body-content")
+    version = row.select_one("span.table-version")
+    if content:
+        rows.append([content.get_text(strip=True),
+                     version.get_text(strip=True) if version else ""])
 
-    # Version span
-    version_span = row.find("span", class_="table-version", attrs={"data-v-67155f90": True})
-    version_text = version_span.text.strip() if version_span else ""
-
-    if content_text or version_text:
-        data_list.append([content_text, version_text])
-        print(f"{content_text} | {version_text}")
-
-# ---------------- Save to CSV ----------------
+# ---------------- Save CSV -----------------------
 with open("lenovo_audio_content_version.csv", "w", newline="", encoding="utf-8") as f:
     writer = csv.writer(f)
-    #writer.writerow(["Content", "Version"])
-    writer.writerows(data_list)
+    writer.writerow(["Content", "Version"])
+    writer.writerows(rows)
 
-print("Data saved to lenovo_audio_content_version.csv")
+print(f"✅ Data saved to lenovo_audio_content_version.csv ({len(rows)} rows)")
 
-# Keep browser open
-print("Browser is open. Close it manually when done.")
 driver.quit()
+print("Finished.")
